@@ -34,9 +34,11 @@ BufferedSerial pc(USBTX, USBRX);
 void sel_gesture(Arguments *in, Reply *out);
 // tilt angle detect
 void tilt_detect (Arguments *in, Reply *out);
+void show_data (Arguments *in, Reply *out);
 int acc2angle(void);
 RPCFunction rpcFun1(&sel_gesture, "sel_gesture");
 RPCFunction rpcFun2(&tilt_detect, "tilt_detect");
+RPCFunction rpcFun3(&show_data, "show_data");
 double x, y;
 int sel_enable = true;
 // default angle 30
@@ -48,6 +50,8 @@ Thread t;
 
 // examdeclare
 int gesture_index = 0;
+int data_change_dir[6] = {0};
+int trigger_time = 0;
 // acc value
 int16_t AccDataXYZ[3] = {0};
 int16_t ref_ACC[3] = {0};
@@ -127,7 +131,9 @@ void stopRecord(void)
 void sel_gesture (Arguments *in, Reply *out) 
 {
   //////////------------
+  int i = 0;
     message_num = 0;
+    trigger_time = 0;
     // wifi
     wifi = WiFiInterface::get_default_instance();
     if (!wifi) {
@@ -290,28 +296,46 @@ void sel_gesture (Arguments *in, Reply *out)
     // Analyze the results to obtain a prediction
     gesture_index = PredictGesture(interpreter->output(0)->data.f);
     
+    ///-------------
+// another way to classify data
+    //printf("x = %d,y = %d, z = %d\n", pDataXYZ[0], pDataXYZ[1], pDataXYZ[2]);
+    
+    //----------
+
+
     //determin angle
-    if (gesture_index == 0) {
-      // ring
+    if (gesture_index == 0 ||gesture_index == 1 || gesture_index == 2) {
       mqtt_queue.call(&publish_message, &client);
       uLCD.locate(1,2);
       uLCD.printf("gesture ID = %d", gesture_index);
       error_reporter->Report("gesture ID = %d\n", gesture_index);
+
+      int change_dir = 0;
+      for (i = 0; i < 600; i = i + 30) {
+      
+        float val_x = *(model_input->data.f + i * sizeof(float));
+        float val_y = *(model_input->data.f + (i + 1) * sizeof(float));
+        float val_z = *(model_input->data.f + (i + 2) * sizeof(float));
+
+        double length_acc = sqrt(val_x * val_x + val_y * val_y + val_z * val_z);
+        double theta_acc = acos((val_x* val_x + val_y * val_y + val_z * val_z) / (length_acc * length_acc));
+        int angle_acc = (int)(theta_acc * 180 / 3.1415926);
+        if (angle_acc > 30) {
+          change_dir = 1;
+        }
+      }
+
+      data_change_dir[trigger_time] = change_dir;
+      trigger_time++;
+      
+    
+      if (trigger_time == 5) {
+        sel_enable = 0;
+        close_mqtt();
+      }
     }
-    else if (gesture_index == 1) {
-      // slope
-      mqtt_queue.call(&publish_message, &client);
-      uLCD.locate(1,2);
-      uLCD.printf("gesture ID = %d", gesture_index);
-      error_reporter->Report("gesture ID = %d\n", gesture_index);
-    } 
-    else if (gesture_index == 2) {
-      // wave
-      mqtt_queue.call(&publish_message, &client);
-      uLCD.locate(1,2);
-      uLCD.printf("gesture ID = %d", gesture_index);
-      error_reporter->Report("gesture ID = %d\n", gesture_index);
-    }
+
+
 
     // Clear the buffer next time we read data
     should_clear_buffer = gesture_index < label_num;
@@ -572,4 +596,13 @@ void initial_ref_acc(void)
     BSP_ACCELERO_AccGetXYZ(ref_ACC);
     ref_length = sqrt(ref_ACC[0]*ref_ACC[0]+ref_ACC[1]*ref_ACC[1]+ref_ACC[2]*ref_ACC[2]);
     myled1 = 0;
+}
+
+void show_data (Arguments *in, Reply *out)
+{
+  
+  for (int j = 0; j < 6 ;j++) {
+    printf("%d\n", data_change_dir[j]);
+  }
+
 }
